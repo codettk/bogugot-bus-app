@@ -68,6 +68,11 @@ const plan = await agent(
   }
 )
 
+if (!plan) {
+  log('architect 에이전트 실행 실패 (null 반환). 태스크 분해 불가.')
+  return { status: 'error', summary: 'architect agent returned null', passed: [], failed: [] }
+}
+
 log(`subtask ${plan.subtasks.length}개로 분해 완료: ${plan.subtasks.map(s => s.title).join(', ')}`)
 
 // ─── Phase 2: Build ──────────────────────────────────────────────────────────

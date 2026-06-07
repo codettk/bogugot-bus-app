@@ -58,8 +58,9 @@ const [codeState, openIssues] = await parallel([
   () => agent(
     `GitHub API로 열린 이슈 전체를 조회해줘.
 
-GET https://api.github.com/repos/${process.env.GITHUB_REPO}/issues?state=open&per_page=50
-Authorization: Bearer ${process.env.GITHUB_TOKEN}
+GITHUB_REPO 환경변수에서 레포지토리명을, GITHUB_TOKEN 환경변수에서 인증 토큰을 읽어서 아래 API를 호출해:
+GET https://api.github.com/repos/<레포>/issues?state=open&per_page=50
+Authorization: Bearer <토큰>
 
 WebFetch로 조회한 후, 각 이슈의 number, title, labels, body를 JSON 형식으로 반환해줘.`,
     { label: 'analyze:issues', phase: 'Analyze' }
@@ -105,15 +106,16 @@ log(`제안 ${suggestions.suggestions.length}개: ${suggestions.suggestions.map(
 // Phase 3: 이슈 생성/업데이트
 phase('Apply')
 
-const results = await parallel(
+await parallel(
   suggestions.suggestions.map(suggestion => () => {
     if (suggestion.action === 'create') {
       const labels = suggestion.labels || ['backlog', `priority:${suggestion.priority || 'medium'}`]
       return agent(
         `GitHub API로 새 이슈를 생성해줘.
 
-POST https://api.github.com/repos/${process.env.GITHUB_REPO}/issues
-Authorization: Bearer ${process.env.GITHUB_TOKEN}
+GITHUB_REPO 환경변수에서 레포지토리명을, GITHUB_TOKEN 환경변수에서 인증 토큰을 읽어서 아래 API를 호출해:
+POST https://api.github.com/repos/<레포>/issues
+Authorization: Bearer <토큰>
 Content-Type: application/json
 
 body:
@@ -130,13 +132,14 @@ WebFetch로 POST 요청 실행 후 생성된 이슈 번호를 반환해줘.`,
       return agent(
         `GitHub API로 기존 이슈 #${suggestion.existingIssueNumber}에 코멘트를 추가해줘.
 
-POST https://api.github.com/repos/${process.env.GITHUB_REPO}/issues/${suggestion.existingIssueNumber}/comments
-Authorization: Bearer ${process.env.GITHUB_TOKEN}
+GITHUB_REPO 환경변수에서 레포지토리명을, GITHUB_TOKEN 환경변수에서 인증 토큰을 읽어서 아래 API를 호출해:
+POST https://api.github.com/repos/<레포>/issues/${suggestion.existingIssueNumber}/comments
+Authorization: Bearer <토큰>
 Content-Type: application/json
 
 body:
 {
-  "body": ${JSON.stringify(`## 📋 스프린트 플래너 업데이트\n\n**업데이트 이유:** ${suggestion.reason}\n\n${suggestion.additionalBody}`)}
+  "body": ${JSON.stringify('## 📋 스프린트 플래너 업데이트\n\n**업데이트 이유:** ' + suggestion.reason + '\n\n' + suggestion.additionalBody)}
 }
 
 WebFetch로 POST 요청 실행 후 성공 여부를 반환해줘.`,

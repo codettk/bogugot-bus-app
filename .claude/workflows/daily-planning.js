@@ -107,15 +107,15 @@ for (const task of tasks) {
     : `## ⚠️ 구현 부분 실패\n\n${result?.summary || '결과 없음'}\n\n**실패 항목:**\n${(result?.failed || []).map(f => `- ${f.title}: ${f.feedback}`).join('\n')}\n\n> 자동 기록 by bogugot PM`
 
   await agent(
-    `GitHub API를 사용해서 다음 작업을 순서대로 실행해줘.
+    `GitHub API를 사용해서 다음 작업을 순서대로 실행해줘. GITHUB_REPO와 GITHUB_TOKEN 환경변수를 읽어서 사용해.
 
 1. 이슈 #${task.issueNumber}에 코멘트 추가:
-   POST https://api.github.com/repos/${process.env.GITHUB_REPO}/issues/${task.issueNumber}/comments
-   Authorization: Bearer ${process.env.GITHUB_TOKEN}
+   POST https://api.github.com/repos/<GITHUB_REPO>/issues/${task.issueNumber}/comments
+   Authorization: Bearer <GITHUB_TOKEN>
    body: ${JSON.stringify(commentBody)}
 
 2. ${success ? `이슈 #${task.issueNumber} close:
-   PATCH https://api.github.com/repos/${process.env.GITHUB_REPO}/issues/${task.issueNumber}
+   PATCH https://api.github.com/repos/<GITHUB_REPO>/issues/${task.issueNumber}
    body: {"state": "closed"}` : `이슈 #${task.issueNumber}에 in_progress 라벨 제거 (실패했으므로 유지)`}
 
 WebFetch로 각 API를 호출하고 결과를 확인해줘.`,

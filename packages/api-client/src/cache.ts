@@ -1,5 +1,6 @@
 export const CACHE_TTL = {
   BUS_LOCATION: 10,    // 10초 — 실시간성 요구
+  BUS_ARRIVAL: 10,     // 10초 — 도착 예정 정보 (자주 변경)
   STOP_INFO: 3600,     // 1시간 — 변경 빈도 낮음
   ROUTE_INFO: 3600,    // 1시간 — 변경 빈도 낮음
 } as const
