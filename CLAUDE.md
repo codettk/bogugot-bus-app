@@ -69,6 +69,7 @@ bogugot-bus-app/
 │   ├── settings.json
 │   ├── agents/                     # Claude Code 서브에이전트 페르소나
 │   │   ├── pm.md                   # PM: GitHub Issues 읽고 오늘 태스크 결정
+│   │   ├── planning-pm.md          # 스프린트 플래너: 코드 분석 → 다음 이슈 제안
 │   │   ├── architect.md            # 기능 분해 및 인터페이스 설계
 │   │   ├── backend-dev.md          # API Route, DB, Redis, SSE
 │   │   ├── frontend-dev.md         # 웹/모바일 UI, 상태 관리
@@ -76,7 +77,8 @@ bogugot-bus-app/
 │   │   └── reviewer.md             # 타입 안전성, 보안, 성능 검사
 │   └── workflows/
 │       ├── implement-feature.js    # 기능 구현 → 검사 → 재작업 오케스트레이션
-│       └── daily-planning.js       # PM → 대장 → 서브에이전트 전체 파이프라인
+│       ├── daily-planning.js       # PM → 구현 → 이슈 close → planning 전체 파이프라인
+│       └── planning.js             # 코드 분석 → 갭 파악 → 이슈 자동 생성/업데이트
 ├── docker-compose.yml              # PostgreSQL 16 + Redis 7
 ├── tsconfig.base.json              # 공통 TypeScript 설정 (strict: true)
 ├── turbo.json
@@ -95,16 +97,19 @@ bogugot-bus-app/
           ↓
   [PM 에이전트] GitHub Issues 읽기 + 우선순위 판단
           ↓
-    판단 가능                  판단 불가
-          ↓                         ↓
-  implement-feature          DB(pm_decisions)에 질문 저장
-  서브에이전트 실행            워크플로우 종료
-  git push                         ↓
-                          사용자: http://localhost:3000/admin/pm
-                          질문 확인 → 답변 선택 → 제출
-                                    ↓
-                          POST /api/pm/trigger
-                          → Claude CLI 재실행 → 작업 시작
+    판단 가능                        판단 불가
+          ↓                               ↓
+  implement-feature              DB(pm_decisions)에 질문 저장
+  서브에이전트 실행                워크플로우 종료
+          ↓                               ↓
+  구현 성공: 이슈 코멘트 + close    사용자: http://localhost:3000/admin/pm
+  구현 실패: 이슈에 실패 내용 코멘트  질문 확인 → 답변 선택 → 제출
+          ↓                               ↓
+  [planning 워크플로우]           POST /api/pm/trigger
+  코드 현황 분석                   → Claude CLI 재실행 → 작업 시작
+  열린 이슈 조회
+  갭 분석 → 신규 이슈 생성/업데이트
+  (최대 5개, 중복 방지)
 ```
 
 ### GitHub Issues 백로그 규칙
@@ -114,12 +119,45 @@ PM이 읽을 이슈에는 반드시 다음 라벨을 붙입니다:
 - `priority:high` / `priority:medium` / `priority:low` — 우선순위
 - `in_progress` — 작업 중 (PM이 건너뜀)
 
+### 이슈 자동 처리 규칙
+
+- 구현 **성공** 시: 이슈에 결과 요약 코멘트 추가 → 이슈 `closed`
+- 구현 **실패** 시: 이슈에 실패 내용 코멘트 추가 → 이슈 `open` 유지 (다음날 재시도)
+- 매일 작업 종료 후 `planning` 워크플로우가 자동 실행되어 다음 스프린트 이슈를 보충
+
 ## 경기 버스 OpenAPI 규칙
 
-- **기본 URL**: `https://openapi.gg.go.kr`
+- **기본 URL**: `https://apis.data.go.kr/6410000` (공공데이터포털, `6410000`은 경기도청 기관코드)
+- **키 발급**: [data.go.kr](https://www.data.go.kr) 로그인 → "경기도 버스" 검색 → 활용신청 (자동승인)
 - **API 키**: 환경변수 `GYEONGGI_BUS_API_KEY` (절대 코드에 하드코딩 금지)
-- **일일 호출 제한 있음** → Redis 캐시 필수
+- **일일 호출 제한** 개발계정 1,000건/일 → Redis 캐시 필수
 - **모든 호출은 `packages/api-client`를 통해서만** — 직접 fetch 금지
+
+### 엔드포인트 구조
+
+```
+https://apis.data.go.kr/6410000/{서비스명}/v2/{오퍼레이션}v2
+```
+
+| 기능 | 엔드포인트 | 파라미터 | 응답 키 |
+|------|-----------|---------|--------|
+| 버스 위치 | `/buslocationservice/v2/getBusLocationListv2` | `routeId` | `busLocationList` |
+| 도착 정보 | `/busarrivalservice/v2/getBusArrivalListv2` | `stationId` | `busArrivalList` |
+| 정류장 검색 | `/busstationservice/v2/getBusStationListv2` | `keyword` | `busStationList` |
+| 노선 검색 | `/busrouteservice/v2/getBusRouteListv2` | `keyword` | `busRouteList` |
+
+### API 응답 구조
+
+```json
+{
+  "response": {
+    "msgHeader": { "resultCode": 0, "resultMessage": "정상적으로 처리되었습니다." },
+    "msgBody": { "busLocationList": [...] }
+  }
+}
+```
+
+`resultCode !== 0`이면 `GyeonggiApiError` 발생. `packages/api-client`의 `fetchApi()`가 자동 처리.
 
 ### 캐시 TTL 정책 (절대 변경 금지)
 
@@ -132,15 +170,18 @@ PM이 읽을 이슈에는 반드시 다음 라벨을 붙입니다:
 ### 환경변수 목록
 
 ```bash
-GYEONGGI_BUS_API_KEY=        # 경기도 OpenAPI 키
+GYEONGGI_BUS_API_KEY=        # 경기도 OpenAPI 키 (data.go.kr 발급, URL 디코딩된 원본값 사용)
 DATABASE_URL=postgresql://bogugot:bogugot1234@localhost:5432/bogugot
 REDIS_URL=redis://localhost:6379
 KAKAO_MAP_APP_KEY=            # 카카오맵 앱 키
 NEXT_PUBLIC_KAKAO_MAP_APP_KEY=
-FCM_SERVER_KEY=               # Firebase Cloud Messaging 서버 키
-GITHUB_TOKEN=                 # Fine-grained token (Issues: Read-only)
+GOOGLE_APPLICATION_CREDENTIALS=./bogugot-bus-app-firebase-adminsdk-fbsvc-*.json  # Firebase Admin SDK
+FCM_SERVER_KEY=               # Firebase Cloud Messaging 서버 키 (알림 기능 시 필요)
+GITHUB_TOKEN=                 # Fine-grained token (Issues: Read & Write)
 GITHUB_REPO=codettk/bogugot-bus-app
 ```
+
+> `GYEONGGI_BUS_API_KEY`는 URL 인코딩된 값(`%2B`, `%3D`)이 아닌 원본(`+`, `=`)으로 저장. `url.searchParams.set()`이 자동 인코딩함.
 
 ## DB 스키마 (현재 생성된 테이블)
 
@@ -159,6 +200,7 @@ Claude Code 멀티에이전트 하네스(`.claude/agents/`)를 사용할 때 아
 | 에이전트 | 역할 | 담당 경로 |
 |----------|------|-----------|
 | `pm` | GitHub Issues 읽기, 오늘 태스크 결정, 판단 불가 시 DB 저장 | 전체 (읽기만) |
+| `planning-pm` | 코드베이스 분석, 갭 파악, 다음 스프린트 이슈 제안 (신규/업데이트) | 전체 (읽기만) |
 | `architect` | 기능 분해 및 인터페이스 설계 | 전체 (설계만, 구현 없음) |
 | `backend-dev` | API Route, DB 스키마, Redis 캐시, SSE | `apps/web/app/api/`, `apps/web/lib/` |
 | `frontend-dev` | 웹/모바일 UI, 상태 관리, 지도 | `apps/web/app/`, `apps/mobile/`, `packages/ui/` |
@@ -246,10 +288,13 @@ http://localhost:3000/admin/pm    # PM 질문 확인 및 답변
 
 ```bash
 # 기능 구현 (분해 → 구현 → 리뷰 → 재작업)
-/workflows implement-feature "버스 위치 SSE 엔드포인트 구현"
+/implement-feature "버스 위치 SSE 엔드포인트 구현"
 
-# PM 수동 실행 (GitHub Issues 기반 오늘 작업 자동 판단)
-/workflows daily-planning
+# PM 수동 실행 (GitHub Issues 기반 오늘 작업 자동 판단 → 구현 → 이슈 close → planning)
+/daily-planning
+
+# 스프린트 계획만 단독 실행 (코드 분석 → 다음 이슈 자동 생성/업데이트)
+/planning
 
 # 매일 7AM 자동 실행 (Windows 작업 스케줄러 등록 완료)
 # scripts/morning-run.ps1 참고
