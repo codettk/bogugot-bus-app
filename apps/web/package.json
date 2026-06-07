@@ -1,0 +1,36 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "tsc": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@bogugot/types": "workspace:*",
+    "@bogugot/api-client": "workspace:*",
+    "@bogugot/ui": "workspace:*",
+    "next": "14.2.18",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.1",
+    "@tanstack/react-query": "^5.62.7",
+    "pg": "^8.13.1",
+    "ioredis": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.6.3",
+    "tailwindcss": "^3.4.15",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.18"
+  }
+}
