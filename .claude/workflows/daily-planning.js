@@ -5,6 +5,7 @@ export const meta = {
     { title: 'Morning Brief', detail: 'PM이 GitHub Issues 읽고 오늘 태스크 판단' },
     { title: 'Execute', detail: 'implement-feature 워크플로우로 태스크 위임' },
     { title: 'EOD Report', detail: '오늘 완료/실패 요약' },
+    { title: 'Planning', detail: '다음 스프린트 이슈 생성/업데이트' },
   ],
 }
 
@@ -98,15 +99,43 @@ for (const task of tasks) {
   log(`[#${task.issueNumber}] ${task.title} 시작...`)
   const result = await workflow('implement-feature', { task: task.prompt })
   results.push({ task, result })
-  log(`[#${task.issueNumber}] ${task.title} 완료`)
+
+  // 구현 완료 후 GitHub 이슈에 결과 코멘트 + close
+  const success = result && result.summary && !result.failed?.length
+  const commentBody = success
+    ? `## ✅ 구현 완료\n\n${result.summary}\n\n**통과:** ${(result.passed || []).join(', ')}\n\n> 자동 완료 처리 by bogugot PM`
+    : `## ⚠️ 구현 부분 실패\n\n${result?.summary || '결과 없음'}\n\n**실패 항목:**\n${(result?.failed || []).map(f => `- ${f.title}: ${f.feedback}`).join('\n')}\n\n> 자동 기록 by bogugot PM`
+
+  await agent(
+    `GitHub API를 사용해서 다음 작업을 순서대로 실행해줘.
+
+1. 이슈 #${task.issueNumber}에 코멘트 추가:
+   POST https://api.github.com/repos/${process.env.GITHUB_REPO}/issues/${task.issueNumber}/comments
+   Authorization: Bearer ${process.env.GITHUB_TOKEN}
+   body: ${JSON.stringify(commentBody)}
+
+2. ${success ? `이슈 #${task.issueNumber} close:
+   PATCH https://api.github.com/repos/${process.env.GITHUB_REPO}/issues/${task.issueNumber}
+   body: {"state": "closed"}` : `이슈 #${task.issueNumber}에 in_progress 라벨 제거 (실패했으므로 유지)`}
+
+WebFetch로 각 API를 호출하고 결과를 확인해줘.`,
+    { agentType: 'backend-dev', label: `close-issue:${task.issueNumber}`, phase: 'Execute' }
+  )
+
+  log(`[#${task.issueNumber}] ${task.title} ${success ? '완료 (이슈 closed)' : '실패 (이슈 유지)'}`)
 }
 
 // Phase 3: EOD 리포트
 phase('EOD Report')
-const passed = results.filter(r => r.result && r.result.summary)
-const failed = results.filter(r => !r.result || !r.result.summary)
+const passed = results.filter(r => r.result && r.result.summary && !r.result.failed?.length)
+const failed = results.filter(r => !r.result || !r.result.summary || r.result.failed?.length)
 
 log(`오늘 결과: 성공 ${passed.length}개, 실패 ${failed.length}개`)
+
+// Phase 4: 다음 스프린트 계획 (planning 워크플로우)
+phase('Planning')
+log('다음 작업 계획 수립 중...')
+await workflow('planning')
 
 return {
   status: 'done',
