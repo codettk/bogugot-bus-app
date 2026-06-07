@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "경기 버스",
+    "slug": "bogugot-bus-app",
+    "version": "1.0.0",
+    "scheme": "bogugot",
+    "platforms": ["ios", "android"],
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "bundleIdentifier": "com.codettk.bogugot",
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.codettk.bogugot"
+    }
+  }
+}
