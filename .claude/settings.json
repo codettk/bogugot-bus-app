@@ -11,7 +11,7 @@
     "Write",
     "Glob",
     "Grep",
-    "WebFetch(https://openapi.gg.go.kr/*)",
+    "WebFetch(https://apis.data.go.kr/*)",
     "WebFetch(https://api.github.com/*)"
   ]
 }
