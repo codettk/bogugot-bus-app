@@ -1,0 +1,258 @@
+# bogugot-bus-app
+
+경기도 버스 공공 OpenAPI 기반 실시간 버스 추적 앱.
+버스 위치 실시간 지도 표시, 정류장 도착 예상, 노선 검색, 즐겨찾기/알림 기능 제공.
+
+## 기술 스택
+
+| 영역 | 기술 |
+|------|------|
+| 웹 | Next.js 14 (App Router) + TypeScript + Tailwind CSS |
+| 모바일 | React Native + Expo SDK 51 |
+| 모노레포 | Turborepo 2 + pnpm workspaces |
+| 지도 | Kakao Maps SDK (web), react-native-maps (mobile) |
+| 실시간 | SSE (Server-Sent Events) |
+| DB | PostgreSQL 16 + Redis 7 (Docker) |
+| 상태 관리 | Zustand + TanStack Query v5 |
+| 알림 | Firebase Cloud Messaging |
+| 패키지 매니저 | pnpm 10 |
+| Node | v20 |
+
+## 모노레포 구조
+
+```
+bogugot-bus-app/
+├── apps/
+│   ├── web/                        # Next.js 14 웹앱
+│   │   ├── app/
+│   │   │   ├── api/
+│   │   │   │   └── pm/             # PM 자동화 API
+│   │   │   │       ├── decisions/  # GET 오늘 질문 조회
+│   │   │   │       ├── decisions/[id]/answer/  # POST 답변 제출
+│   │   │   │       └── trigger/    # POST Claude CLI 재실행
+│   │   │   ├── admin/
+│   │   │   │   └── pm/             # 관리자 페이지 (/admin/pm)
+│   │   │   ├── layout.tsx
+│   │   │   └── page.tsx
+│   │   ├── lib/
+│   │   │   └── db.ts               # PostgreSQL 풀 (pg.Pool)
+│   │   ├── next.config.mjs
+│   │   ├── tailwind.config.ts
+│   │   └── tsconfig.json
+│   └── mobile/                     # Expo SDK 51 모바일 앱
+│       ├── app/
+│       │   ├── _layout.tsx
+│       │   └── index.tsx
+│       └── app.json
+├── packages/
+│   ├── types/                      # 공유 TypeScript 타입 정의
+│   │   └── src/
+│   │       ├── bus.ts              # BusLocation, BusArrival
+│   │       ├── stop.ts             # BusStop
+│   │       ├── route.ts            # BusRoute
+│   │       └── index.ts
+│   ├── api-client/                 # 경기 버스 OpenAPI 클라이언트
+│   │   └── src/
+│   │       ├── client.ts           # gyeonggiApi (fetch 래퍼)
+│   │       ├── cache.ts            # withCache(), CACHE_TTL
+│   │       ├── errors.ts           # GyeonggiApiError, CacheError
+│   │       └── index.ts
+│   └── ui/                        # 공유 컴포넌트 라이브러리
+│       └── src/
+│           ├── LoadingSpinner.tsx
+│           ├── ErrorMessage.tsx
+│           └── index.ts
+├── scripts/
+│   ├── init-db.sql                 # Docker 초기 DB 스키마 (자동 실행)
+│   └── morning-run.ps1             # Windows 작업 스케줄러용 7AM 실행 스크립트
+├── .claude/
+│   ├── settings.json
+│   ├── agents/                     # Claude Code 서브에이전트 페르소나
+│   │   ├── pm.md                   # PM: GitHub Issues 읽고 오늘 태스크 결정
+│   │   ├── architect.md            # 기능 분해 및 인터페이스 설계
+│   │   ├── backend-dev.md          # API Route, DB, Redis, SSE
+│   │   ├── frontend-dev.md         # 웹/모바일 UI, 상태 관리
+│   │   ├── api-specialist.md       # 경기 버스 OpenAPI 클라이언트
+│   │   └── reviewer.md             # 타입 안전성, 보안, 성능 검사
+│   └── workflows/
+│       ├── implement-feature.js    # 기능 구현 → 검사 → 재작업 오케스트레이션
+│       └── daily-planning.js       # PM → 대장 → 서브에이전트 전체 파이프라인
+├── docker-compose.yml              # PostgreSQL 16 + Redis 7
+├── tsconfig.base.json              # 공통 TypeScript 설정 (strict: true)
+├── turbo.json
+├── pnpm-workspace.yaml
+└── package.json                    # 루트 (packageManager: pnpm@10.34.1)
+```
+
+## PM 자동화 시스템
+
+매일 7AM Windows 작업 스케줄러가 `scripts/morning-run.ps1`을 실행합니다.
+
+```
+[작업 스케줄러 - 7AM]
+  → morning-run.ps1
+  → claude --workflow daily-planning
+          ↓
+  [PM 에이전트] GitHub Issues 읽기 + 우선순위 판단
+          ↓
+    판단 가능                  판단 불가
+          ↓                         ↓
+  implement-feature          DB(pm_decisions)에 질문 저장
+  서브에이전트 실행            워크플로우 종료
+  git push                         ↓
+                          사용자: http://localhost:3000/admin/pm
+                          질문 확인 → 답변 선택 → 제출
+                                    ↓
+                          POST /api/pm/trigger
+                          → Claude CLI 재실행 → 작업 시작
+```
+
+### GitHub Issues 백로그 규칙
+
+PM이 읽을 이슈에는 반드시 다음 라벨을 붙입니다:
+- `backlog` — PM이 매일 조회하는 기본 라벨
+- `priority:high` / `priority:medium` / `priority:low` — 우선순위
+- `in_progress` — 작업 중 (PM이 건너뜀)
+
+## 경기 버스 OpenAPI 규칙
+
+- **기본 URL**: `https://openapi.gg.go.kr`
+- **API 키**: 환경변수 `GYEONGGI_BUS_API_KEY` (절대 코드에 하드코딩 금지)
+- **일일 호출 제한 있음** → Redis 캐시 필수
+- **모든 호출은 `packages/api-client`를 통해서만** — 직접 fetch 금지
+
+### 캐시 TTL 정책 (절대 변경 금지)
+
+| 데이터 | TTL | Redis 키 패턴 |
+|--------|-----|---------------|
+| 버스 위치 | **10초** | `bus:location:{busId}` |
+| 정류소 정보 | **1시간 (3600초)** | `stop:info:{stopId}` |
+| 노선 정보 | **1시간 (3600초)** | `route:info:{routeId}` |
+
+### 환경변수 목록
+
+```bash
+GYEONGGI_BUS_API_KEY=        # 경기도 OpenAPI 키
+DATABASE_URL=postgresql://bogugot:bogugot1234@localhost:5432/bogugot
+REDIS_URL=redis://localhost:6379
+KAKAO_MAP_APP_KEY=            # 카카오맵 앱 키
+NEXT_PUBLIC_KAKAO_MAP_APP_KEY=
+FCM_SERVER_KEY=               # Firebase Cloud Messaging 서버 키
+GITHUB_TOKEN=                 # Fine-grained token (Issues: Read-only)
+GITHUB_REPO=codettk/bogugot-bus-app
+```
+
+## DB 스키마 (현재 생성된 테이블)
+
+```sql
+-- PM 자동화: 질문 대기 테이블
+pm_decisions (id, run_date, questions JSONB, answers JSONB, status, created_at, answered_at)
+
+-- 버스 앱 핵심 기능
+favorites (id, user_id, type, reference_id, label, created_at)
+```
+
+## 에이전트 책임 분리
+
+Claude Code 멀티에이전트 하네스(`.claude/agents/`)를 사용할 때 아래 책임 분리를 따름:
+
+| 에이전트 | 역할 | 담당 경로 |
+|----------|------|-----------|
+| `pm` | GitHub Issues 읽기, 오늘 태스크 결정, 판단 불가 시 DB 저장 | 전체 (읽기만) |
+| `architect` | 기능 분해 및 인터페이스 설계 | 전체 (설계만, 구현 없음) |
+| `backend-dev` | API Route, DB 스키마, Redis 캐시, SSE | `apps/web/app/api/`, `apps/web/lib/` |
+| `frontend-dev` | 웹/모바일 UI, 상태 관리, 지도 | `apps/web/app/`, `apps/mobile/`, `packages/ui/` |
+| `api-specialist` | 경기 버스 OpenAPI 클라이언트 | `packages/api-client/` |
+| `reviewer` | 타입 안전성, 보안, 성능, 컨벤션 검사 | 전체 (검사만, 수정 없음) |
+
+## 코드 컨벤션
+
+### TypeScript
+- `strict: true` 필수 — `any` 사용 금지, `unknown` 사용
+- 공유 타입은 반드시 `packages/types`에 정의 후 import
+- API 응답 타입은 `packages/api-client`에서 export
+- `tsconfig.base.json` 상속 후 패키지별 확장
+
+### 파일명
+- 모든 파일: `kebab-case.ts` (PascalCase는 React 컴포넌트 파일만 허용)
+- Next.js 특수 파일: `page.tsx`, `layout.tsx`, `route.ts`, `loading.tsx` 등 프레임워크 규칙 따름
+
+### Next.js App Router
+- 기본적으로 Server Component 사용
+- `'use client'`는 상태/이벤트 핸들러가 필요한 최소 범위에만 적용
+- 데이터 fetching은 Server Component에서 직접 또는 Server Action 사용
+- SSE 엔드포인트: `Response` with `ReadableStream` 반환
+- DB 접근: `apps/web/lib/db.ts`의 `db.query()` 사용
+
+### Redis 캐시 패턴
+```typescript
+import { withCache, CACHE_TTL } from '@bogugot/api-client'
+
+const data = await withCache(redis, `bus:location:${busId}`, CACHE_TTL.BUS_LOCATION, () =>
+  gyeonggiApi.getBusLocations(busId)
+)
+```
+
+### 금지 패턴
+- `console.log` 프로덕션 코드에 사용 금지 (개발 중만 허용)
+- API 키/시크릿 환경변수 없이 코드에 직접 작성 금지
+- `packages/api-client` 우회하여 외부 API 직접 호출 금지
+- SQL 문자열 연결 금지 — 파라미터 바인딩(`$1`, `$2`) 필수
+
+## 로컬 개발
+
+### 선행 조건
+
+```powershell
+# 1. Docker 컨테이너 시작 (PostgreSQL + Redis)
+docker compose up -d
+
+# 2. 의존성 설치
+pnpm install
+
+# 3. .env 파일 확인 (루트에 존재해야 함)
+# .env.example 참고
+```
+
+### 개발 명령
+
+```bash
+# 전체 개발 서버 시작
+pnpm dev
+
+# 웹만 개발
+pnpm --filter web dev
+
+# 모바일만 개발 (Expo Go 앱 필요)
+pnpm --filter mobile start
+
+# 빌드
+pnpm build
+
+# 타입 체크
+pnpm tsc
+
+# 린트
+pnpm lint
+```
+
+### 관리자 페이지
+
+```
+http://localhost:3000/admin/pm    # PM 질문 확인 및 답변
+```
+
+## Claude Code 워크플로우 사용법
+
+```bash
+# 기능 구현 (분해 → 구현 → 리뷰 → 재작업)
+/workflows implement-feature "버스 위치 SSE 엔드포인트 구현"
+
+# PM 수동 실행 (GitHub Issues 기반 오늘 작업 자동 판단)
+/workflows daily-planning
+
+# 매일 7AM 자동 실행 (Windows 작업 스케줄러 등록 완료)
+# scripts/morning-run.ps1 참고
+```
+
+> `isolation: 'worktree'` 사용으로 인해 `git init` + remote 설정 필수.

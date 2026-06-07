@@ -1,0 +1,17 @@
+{
+  "allowedTools": [
+    "Bash(pnpm *)",
+    "Bash(npm *)",
+    "Bash(npx *)",
+    "Bash(git *)",
+    "Bash(tsc *)",
+    "Bash(eslint *)",
+    "Read",
+    "Edit",
+    "Write",
+    "Glob",
+    "Grep",
+    "WebFetch(https://openapi.gg.go.kr/*)",
+    "WebFetch(https://api.github.com/*)"
+  ]
+}
