@@ -1,0 +1,21 @@
+{
+  "name": "bogugot-bus-app",
+  "private": true,
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "tsc": "turbo tsc",
+    "test": "turbo test",
+    "clean": "turbo clean"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.6.3"
+  },
+  "packageManager": "pnpm@10.34.1",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  }
+}
