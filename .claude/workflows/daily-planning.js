@@ -114,6 +114,9 @@ for (const task of tasks) {
   let commentBody
   if (success) {
     commentBody = `## ✅ 구현 완료 — PR 생성됨 (머지 대기)\n\n${result.summary}\n\n**통과:** ${(result.passed || []).concat(result.fixedAndPassed || []).join(', ')}\n\n**PR:** ${prUrl}\n\n> 코드는 통합 브랜치 PR로 올라갔습니다. 검토 후 머지하면 이 이슈는 자동으로 닫힙니다(PR 본문 \`Closes #${task.issueNumber}\`).\n> 자동 처리 by bogugot PM`
+  } else if (prUrl) {
+    // 일부 subtask는 실패했지만 통과한 것만 통합해 부분 PR이 생성된 경우.
+    commentBody = `## ⚠️ 부분 구현 — PR 생성됨 (일부 항목 미완성)\n\n${result.summary}\n\n**통과:** ${(result.passed || []).concat(result.fixedAndPassed || []).join(', ') || '(없음)'}\n\n**미완성 항목:**\n${(result.failed || []).map(f => `- ${f.title}: ${f.feedback}`).join('\n')}\n\n**PR:** ${prUrl}\n\n> 통과한 작업만 PR로 올라갔습니다. 미완성 항목이 있어 이슈는 열어둡니다(다음 사이클 재시도).\n> 자동 처리 by bogugot PM`
   } else if (noFailures) {
     commentBody = `## ⚠️ 구현은 통과했으나 통합 실패\n\n${result.summary}\n\n통합/PR 단계에서 문제가 발생했습니다(타입 검사 실패 또는 push 실패).\n\n${result.integration ? `통합 메모: ${result.integration.notes}` : '통합 정보 없음'}\n\n> 자동 기록 by bogugot PM`
   } else {
