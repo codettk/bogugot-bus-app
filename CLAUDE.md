@@ -93,24 +93,31 @@ bogugot-bus-app/
 ```
 [작업 스케줄러 - 7AM]
   → morning-run.ps1
-  → claude --workflow daily-planning
+  → claude -p "/daily-planning" --dangerously-skip-permissions
           ↓
   [PM 에이전트] GitHub Issues 읽기 + 우선순위 판단
           ↓
     판단 가능                        판단 불가
           ↓                               ↓
   implement-feature              DB(pm_decisions)에 질문 저장
-  서브에이전트 실행                워크플로우 종료
+  (분해→구현→리뷰→통합→PR)        워크플로우 종료
           ↓                               ↓
-  구현 성공: 이슈 코멘트 + close    사용자: http://localhost:3000/admin/pm
-  구현 실패: 이슈에 실패 내용 코멘트  질문 확인 → 답변 선택 → 제출
-          ↓                               ↓
-  [planning 워크플로우]           POST /api/pm/trigger
-  코드 현황 분석                   → Claude CLI 재실행 → 작업 시작
-  열린 이슈 조회
-  갭 분석 → 신규 이슈 생성/업데이트
-  (최대 5개, 중복 방지)
+  구현 성공: 통합 브랜치 머지+tsc    사용자: http://localhost:3000/admin/pm
+   → PR 생성 + 이슈에 PR 링크 코멘트   질문 확인 → 답변 선택 → 제출
+   (이슈는 open 유지, PR 머지 시            ↓
+    Closes 키워드로 자동 close)      POST /api/pm/trigger
+  구현 실패: 이슈에 실패 코멘트       → Claude CLI 재실행 → 작업 시작
+   (이슈 open 유지, 다음날 재시도)
+          ↓
+  [planning 워크플로우]
+  코드 현황 분석 → 열린 이슈 조회
+  갭 분석 → 신규 이슈 생성/업데이트 (최대 5개, 중복 방지)
+          ↓
+  worktree 정리 (git worktree prune + 폴더/브랜치 삭제)
 ```
+
+> 구현 코드는 **master에 직접 머지하지 않고 PR로 올립니다**(사람 검토용). PR 본문에 `Closes #N`이 포함되어 머지 시 이슈가 자동으로 닫힙니다.
+> `isolation: 'worktree'`로 만든 격리 작업트리는 변경이 있으면 자동 삭제되지 않으므로, morning-run.ps1 끝에서 일괄 정리합니다(`.claude/worktrees/`는 `.gitignore` 처리됨).
 
 ### GitHub Issues 백로그 규칙
 
@@ -121,9 +128,23 @@ PM이 읽을 이슈에는 반드시 다음 라벨을 붙입니다:
 
 ### 이슈 자동 처리 규칙
 
-- 구현 **성공** 시: 이슈에 결과 요약 코멘트 추가 → 이슈 `closed`
+- 구현 **성공** 시: 통합 브랜치 머지 + `pnpm tsc` 통과 → **PR 생성**(`Closes #N` 포함) → 이슈에 PR 링크 코멘트 추가 → 이슈는 **`open` 유지**(PR 머지 시 자동 close)
 - 구현 **실패** 시: 이슈에 실패 내용 코멘트 추가 → 이슈 `open` 유지 (다음날 재시도)
 - 매일 작업 종료 후 `planning` 워크플로우가 자동 실행되어 다음 스프린트 이슈를 보충
+- `planning`이 생성하는 신규 이슈에는 **반드시 `backlog` + `priority:*` 라벨**을 붙여야 PM이 다음 사이클에 집어들 수 있음 (라벨 누락 시 자동 루프가 끊김)
+
+### GitHub 연동 규칙 (gh CLI)
+
+워크플로우/에이전트가 GitHub와 상호작용할 때:
+
+- **조회(GET)**: `WebFetch`로 `https://api.github.com/...` 호출 가능 (PM의 이슈 읽기 등)
+- **쓰기(코멘트/이슈 생성/라벨/close/PR)**: 반드시 **인증된 `gh` CLI**를 `Bash`로 사용
+  - ❌ `WebFetch`로 인증 POST/PATCH 금지 — 인증 본문을 신뢰성 있게 보내지 못해 **조용히 누락/실패**함 (코멘트 안 달림, 라벨 빠짐 등)
+  - ✅ `gh issue comment N --body-file <파일>`, `gh issue create --title ... --body-file ... --label backlog --label priority:medium`, `gh pr create --base master --head <branch>`
+  - 긴 본문은 셸 인용 문제를 피하려 임시 파일 + `--body-file` 사용
+  - 쓰기 작업은 `Bash`를 가진 에이전트(`backend-dev`)에 할당 (`reviewer`/`architect`/`planning-pm`은 Bash 없음)
+- `implement-feature`의 통합 단계는 작업 후 **반드시 `git checkout master`로 복귀** (feature 브랜치에 남으면 이후 커밋이 엉뚱한 곳에 얹힘)
+- 자동화 실행 전 **로컬 `master`가 `origin`과 동기화**돼 있어야 함 — 빌드 worktree가 로컬 master에서 갈라지므로, push 안 한 로컬 커밋이 있으면 모든 PR diff에 섞여 들어감
 
 ## 경기 버스 OpenAPI 규칙
 
