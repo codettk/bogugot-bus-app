@@ -113,11 +113,11 @@ bogugot-bus-app/
   코드 현황 분석 → 열린 이슈 조회
   갭 분석 → 신규 이슈 생성/업데이트 (최대 5개, 중복 방지)
           ↓
-  worktree 정리 (git worktree prune + 폴더/브랜치 삭제)
+  잔여 worktree 정리 (안전망: git worktree prune + 폴더/브랜치 삭제)
 ```
 
 > 구현 코드는 **master에 직접 머지하지 않고 PR로 올립니다**(사람 검토용). PR 본문에 `Closes #N`이 포함되어 머지 시 이슈가 자동으로 닫힙니다.
-> `isolation: 'worktree'`로 만든 격리 작업트리는 변경이 있으면 자동 삭제되지 않으므로, morning-run.ps1 끝에서 일괄 정리합니다(`.claude/worktrees/`는 `.gitignore` 처리됨).
+> `implement-feature`는 단일 피처의 subtask들을 **하나의 통합 브랜치(`auto/issue-N`)에서 순차 빌드·커밋**한 뒤 `pnpm tsc` 검증 → push → PR을 만듭니다. 병렬 격리 worktree를 쓰지 않으므로 add/add 병합 충돌이나 worktree 누적이 발생하지 않습니다. morning-run.ps1 끝의 worktree 정리는 과거 잔여물 대비 **안전망**으로만 유지됩니다(`.claude/worktrees/`는 `.gitignore` 처리됨).
 
 ### GitHub Issues 백로그 규칙
 
@@ -144,7 +144,7 @@ PM이 읽을 이슈에는 반드시 다음 라벨을 붙입니다:
   - 긴 본문은 셸 인용 문제를 피하려 임시 파일 + `--body-file` 사용
   - 쓰기 작업은 `Bash`를 가진 에이전트(`backend-dev`)에 할당 (`reviewer`/`architect`/`planning-pm`은 Bash 없음)
 - `implement-feature`의 통합 단계는 작업 후 **반드시 `git checkout master`로 복귀** (feature 브랜치에 남으면 이후 커밋이 엉뚱한 곳에 얹힘)
-- 자동화 실행 전 **로컬 `master`가 `origin`과 동기화**돼 있어야 함 — 빌드 worktree가 로컬 master에서 갈라지므로, push 안 한 로컬 커밋이 있으면 모든 PR diff에 섞여 들어감
+- 자동화 실행 전 **로컬 `master`가 `origin`과 동기화**돼 있어야 함 — 통합 브랜치가 로컬 master에서 갈라지므로, push 안 한 로컬 커밋이 있으면 모든 PR diff에 섞여 들어감
 
 ## 경기 버스 OpenAPI 규칙
 
@@ -321,4 +321,4 @@ http://localhost:3000/admin/pm    # PM 질문 확인 및 답변
 # scripts/morning-run.ps1 참고
 ```
 
-> `isolation: 'worktree'` 사용으로 인해 `git init` + remote 설정 필수.
+> `implement-feature`가 통합 브랜치를 push하고 PR을 생성하므로 `git` remote(`origin`) 설정 필수.
