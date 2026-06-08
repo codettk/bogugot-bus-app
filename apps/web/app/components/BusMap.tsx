@@ -4,45 +4,10 @@ import { useEffect, useRef, useState } from 'react'
 import type { BusLocation } from '@bogugot/types'
 import { useBusSSE } from '../hooks/use-bus-sse'
 
-// Kakao Maps SDK 최소 타입 정의 (any 금지 — 사용하는 부분만 선언)
-interface KakaoLatLng {
-  getLat(): number
-  getLng(): number
-}
-
-interface KakaoMap {
-  setCenter(latlng: KakaoLatLng): void
-  setBounds(bounds: KakaoLatLngBounds): void
-}
-
-interface KakaoLatLngBounds {
-  extend(latlng: KakaoLatLng): void
-  isEmpty(): boolean
-}
-
-interface KakaoMarker {
-  setMap(map: KakaoMap | null): void
-  setPosition(latlng: KakaoLatLng): void
-  setTitle(title: string): void
-}
-
-interface KakaoMaps {
-  LatLng: new (lat: number, lng: number) => KakaoLatLng
-  LatLngBounds: new () => KakaoLatLngBounds
-  Map: new (container: HTMLElement, options: { center: KakaoLatLng; level: number }) => KakaoMap
-  Marker: new (options: { position: KakaoLatLng; title?: string }) => KakaoMarker
-  load(callback: () => void): void
-}
-
-interface KakaoNamespace {
-  maps: KakaoMaps
-}
-
-declare global {
-  interface Window {
-    kakao?: KakaoNamespace
-  }
-}
+// Kakao Maps SDK 타입은 apps/web/types/kakao-maps.d.ts 전역 선언을 사용한다 (any 금지).
+type KakaoNamespace = typeof kakao
+type KakaoMap = kakao.maps.Map
+type KakaoMarker = kakao.maps.Marker
 
 const SDK_SCRIPT_ID = 'kakao-maps-sdk'
 // 경기도청 (수원) — 초기 중심점
@@ -51,15 +16,15 @@ const DEFAULT_LEVEL = 6
 
 function loadKakaoSdk(appKey: string): Promise<KakaoNamespace> {
   return new Promise((resolve, reject) => {
-    if (window.kakao?.maps) {
-      window.kakao.maps.load(() => resolve(window.kakao as KakaoNamespace))
+    if (window.kakao && window.kakao.maps) {
+      window.kakao.maps.load(() => resolve(window.kakao))
       return
     }
 
     const existing = document.getElementById(SDK_SCRIPT_ID)
     if (existing) {
       existing.addEventListener('load', () => {
-        window.kakao?.maps.load(() => resolve(window.kakao as KakaoNamespace))
+        window.kakao.maps.load(() => resolve(window.kakao))
       })
       existing.addEventListener('error', () => reject(new Error('카카오맵 SDK 로드에 실패했습니다')))
       return
@@ -70,7 +35,7 @@ function loadKakaoSdk(appKey: string): Promise<KakaoNamespace> {
     script.async = true
     script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${appKey}&autoload=false`
     script.addEventListener('load', () => {
-      window.kakao?.maps.load(() => resolve(window.kakao as KakaoNamespace))
+      window.kakao.maps.load(() => resolve(window.kakao))
     })
     script.addEventListener('error', () => reject(new Error('카카오맵 SDK 로드에 실패했습니다')))
     document.head.appendChild(script)
