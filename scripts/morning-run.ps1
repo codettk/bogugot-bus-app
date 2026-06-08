@@ -1,4 +1,4 @@
-# bogugot-bus-app 매일 아침 자동 실행 스크립트
+﻿# bogugot-bus-app 매일 아침 자동 실행 스크립트
 # Windows 작업 스케줄러에서 호출됨 (매일 7:00 AM)
 # 등록 방법: 아래 "작업 스케줄러 등록" 섹션 참고
 
@@ -6,6 +6,12 @@ $ProjectDir = "c:\dev\codettk\bogugot-bus-app"
 $LogDir = "$ProjectDir\logs"
 $LogFile = "$LogDir\morning-run-$(Get-Date -Format 'yyyy-MM-dd').log"
 $EnvFile = "$ProjectDir\.env"
+
+# UTF-8 인코딩 강제 (Windows PowerShell 5.1에서 한글 로그/출력 깨짐 방지)
+# claude.exe(UTF-8 출력)를 올바르게 캡처하고 로그도 UTF-8로 기록한다.
+$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
 
 # 로그 디렉토리 생성
 if (-not (Test-Path $LogDir)) {
@@ -15,7 +21,9 @@ if (-not (Test-Path $LogDir)) {
 function Write-Log {
     param($Message)
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    "$timestamp $Message" | Tee-Object -FilePath $LogFile -Append
+    $line = "$timestamp $Message"
+    Write-Host $line
+    Add-Content -Path $LogFile -Value $line -Encoding UTF8
 }
 
 Write-Log "=== 아침 자동화 시작 ==="
@@ -75,7 +83,10 @@ if ($PendingCount -gt 0) {
 Write-Log "daily-planning 워크플로우 시작..."
 
 try {
-    & claude -p "/daily-planning" --dangerously-skip-permissions 2>&1 | Tee-Object -FilePath $LogFile -Append
+    & claude -p "/daily-planning" --dangerously-skip-permissions 2>&1 | ForEach-Object {
+        Write-Host $_
+        Add-Content -Path $LogFile -Value $_ -Encoding UTF8
+    }
     $ExitCode = $LASTEXITCODE
     Write-Log "워크플로우 종료 (exit code: $ExitCode)"
 } catch {
@@ -83,9 +94,9 @@ try {
     exit 1
 }
 
-# 워크플로우 종료 후 잔여 worktree 정리 (디스크 누적 방지)
-# implement-feature가 isolation:'worktree'로 만든 격리 작업트리는 변경이 있으면
-# 자동 삭제되지 않으므로, 통합(병합) 단계가 끝난 뒤 여기서 일괄 정리한다.
+# 워크플로우 종료 후 잔여 worktree 정리 (안전망)
+# implement-feature는 단일 통합 브랜치 순차 빌드로 전환되어 worktree를 만들지 않지만,
+# 과거 잔여물이나 예외 상황 대비로 prune을 유지한다.
 Write-Log "worktree 정리 중..."
 try {
     & git -C $ProjectDir worktree prune 2>&1 | Out-Null
