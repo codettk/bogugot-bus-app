@@ -109,41 +109,43 @@ phase('Apply')
 await parallel(
   suggestions.suggestions.map(suggestion => () => {
     if (suggestion.action === 'create') {
-      const labels = suggestion.labels || ['backlog', `priority:${suggestion.priority || 'medium'}`]
+      // PM은 backlog 라벨로 이슈를 필터하므로, 생성 이슈에는 반드시 backlog + priority 라벨을 붙인다.
+      const labels = suggestion.labels && suggestion.labels.length > 0
+        ? suggestion.labels
+        : ['backlog', `priority:${suggestion.priority || 'medium'}`]
       return agent(
-        `GitHub API로 새 이슈를 생성해줘.
+        `인증된 gh CLI(Bash)로 새 GitHub 이슈를 생성해라. (WebFetch 인증 POST는 신뢰성이 없으므로 gh를 사용)
 
-GITHUB_REPO 환경변수에서 레포지토리명을, GITHUB_TOKEN 환경변수에서 인증 토큰을 읽어서 아래 API를 호출해:
-POST https://api.github.com/repos/<레포>/issues
-Authorization: Bearer <토큰>
-Content-Type: application/json
+절차:
+1. 아래 본문을 임시 파일에 쓴다(--body-file 사용, 줄바꿈/따옴표 보존).
+2. 다음 명령으로 이슈를 생성한다. 라벨은 반드시 포함해야 한다(PM이 backlog 라벨로 작업을 집어들기 때문):
+   gh issue create --title "<제목>" --body-file <임시파일> ${labels.map(l => `--label "${l}"`).join(' ')}
+3. 라벨이 없어서 실패하면 \`gh label create "<라벨명>"\` 로 먼저 만든 뒤 다시 시도한다.
+4. 생성된 이슈 URL/번호를 확인해 반환한다.
 
-body:
-{
-  "title": ${JSON.stringify(suggestion.title)},
-  "body": ${JSON.stringify(suggestion.body)},
-  "labels": ${JSON.stringify(labels)}
-}
-
-WebFetch로 POST 요청 실행 후 생성된 이슈 번호를 반환해줘.`,
-        { label: `apply:create:${suggestion.title}`, phase: 'Apply' }
+제목: ${suggestion.title}
+적용할 라벨: ${labels.join(', ')}
+본문:
+---
+${suggestion.body}
+---`,
+        { agentType: 'backend-dev', label: `apply:create:${suggestion.title}`, phase: 'Apply' }
       )
     } else {
+      const commentText = '## 📋 스프린트 플래너 업데이트\n\n**업데이트 이유:** ' + suggestion.reason + '\n\n' + suggestion.additionalBody
       return agent(
-        `GitHub API로 기존 이슈 #${suggestion.existingIssueNumber}에 코멘트를 추가해줘.
+        `인증된 gh CLI(Bash)로 기존 이슈 #${suggestion.existingIssueNumber}에 코멘트를 추가해라.
 
-GITHUB_REPO 환경변수에서 레포지토리명을, GITHUB_TOKEN 환경변수에서 인증 토큰을 읽어서 아래 API를 호출해:
-POST https://api.github.com/repos/<레포>/issues/${suggestion.existingIssueNumber}/comments
-Authorization: Bearer <토큰>
-Content-Type: application/json
+절차:
+1. 아래 본문을 임시 파일에 쓴다(--body-file 사용).
+2. \`gh issue comment ${suggestion.existingIssueNumber} --body-file <임시파일>\` 실행.
+3. 성공(코멘트 URL 출력)을 확인해 반환한다.
 
-body:
-{
-  "body": ${JSON.stringify('## 📋 스프린트 플래너 업데이트\n\n**업데이트 이유:** ' + suggestion.reason + '\n\n' + suggestion.additionalBody)}
-}
-
-WebFetch로 POST 요청 실행 후 성공 여부를 반환해줘.`,
-        { label: `apply:update:${suggestion.existingIssueNumber}`, phase: 'Apply' }
+본문:
+---
+${commentText}
+---`,
+        { agentType: 'backend-dev', label: `apply:update:${suggestion.existingIssueNumber}`, phase: 'Apply' }
       )
     }
   })

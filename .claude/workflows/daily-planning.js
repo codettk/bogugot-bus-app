@@ -121,15 +121,20 @@ for (const task of tasks) {
   }
 
   // 코멘트만 남기고 이슈는 열어둔다(PR 머지 시 GitHub가 Closes 키워드로 자동 close).
+  // 인증된 gh CLI를 Bash로 사용한다. (WebFetch는 인증 본문 POST를 신뢰성 있게 처리하지 못함)
   await agent(
-    `GitHub API를 사용해서 다음 작업을 실행해줘. GITHUB_REPO와 GITHUB_TOKEN 환경변수를 읽어서 사용해.
+    `인증된 gh CLI(Bash)를 사용해 이슈 #${task.issueNumber}에 코멘트를 추가해라.
 
-이슈 #${task.issueNumber}에 코멘트 추가:
-   POST https://api.github.com/repos/<GITHUB_REPO>/issues/${task.issueNumber}/comments
-   Authorization: Bearer <GITHUB_TOKEN>
-   body: ${JSON.stringify(commentBody)}
+절차:
+1. 아래 코멘트 본문을 임시 파일에 쓴다(따옴표/줄바꿈 보존을 위해 --body-file 사용).
+2. \`gh issue comment ${task.issueNumber} --body-file <임시파일>\` 실행.
+3. 명령이 성공했는지(코멘트 URL 출력) 확인하고, 실패 시 원인을 보고한다.
+4. 이슈 상태는 변경하지 마라 — PR 머지 시 Closes 키워드로 자동 close된다.
 
-WebFetch로 API를 호출하고 결과를 확인해줘. (이슈 상태는 변경하지 마라 — PR 머지 시 자동으로 닫힌다.)`,
+코멘트 본문:
+---
+${commentBody}
+---`,
     { agentType: 'backend-dev', label: `comment-issue:${task.issueNumber}`, phase: 'Execute' }
   )
 
