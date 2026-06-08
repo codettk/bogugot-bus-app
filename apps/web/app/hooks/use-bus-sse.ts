@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import type { BusLocation } from '@bogugot/types'
+import type { BusLocation, SseEvent } from '@bogugot/types'
 
 export function useBusSSE(routeId: string | null): BusLocation[] {
   const [buses, setBuses] = useState<BusLocation[]>([])
@@ -12,12 +12,15 @@ export function useBusSSE(routeId: string | null): BusLocation[] {
       return
     }
 
-    const es = new EventSource(`/api/bus/sse?routeId=${encodeURIComponent(routeId)}`)
+    const es = new EventSource(`/api/bus/location/${encodeURIComponent(routeId)}`)
 
     es.onmessage = (e: MessageEvent<string>) => {
       try {
-        const data = JSON.parse(e.data) as BusLocation[]
-        setBuses(data)
+        const event = JSON.parse(e.data) as SseEvent
+        if (event.type === 'bus-location') {
+          setBuses(event.locations)
+        }
+        // heartbeat / error 이벤트는 위치 갱신 대상이 아니므로 무시
       } catch {
         // 파싱 실패 시 무시
       }

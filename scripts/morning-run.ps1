@@ -73,15 +73,42 @@ if ($PendingCount -gt 0) {
 
 # daily-planning 워크플로우 실행
 Write-Log "daily-planning 워크플로우 시작..."
-$DateArg = "{`"date`":`"$Today`"}"
 
 try {
-    & claude --workflow daily-planning --args $DateArg 2>&1 | Tee-Object -FilePath $LogFile -Append
+    & claude -p "/daily-planning" --dangerously-skip-permissions 2>&1 | Tee-Object -FilePath $LogFile -Append
     $ExitCode = $LASTEXITCODE
     Write-Log "워크플로우 종료 (exit code: $ExitCode)"
 } catch {
     Write-Log "오류: $($_.Exception.Message)"
     exit 1
+}
+
+# 워크플로우 종료 후 잔여 worktree 정리 (디스크 누적 방지)
+# implement-feature가 isolation:'worktree'로 만든 격리 작업트리는 변경이 있으면
+# 자동 삭제되지 않으므로, 통합(병합) 단계가 끝난 뒤 여기서 일괄 정리한다.
+Write-Log "worktree 정리 중..."
+try {
+    & git -C $ProjectDir worktree prune 2>&1 | Out-Null
+
+    $WtDir = "$ProjectDir\.claude\worktrees"
+    if (Test-Path $WtDir) {
+        Get-ChildItem $WtDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            try { Remove-Item $_.FullName -Recurse -Force -ErrorAction Stop } catch {}
+        }
+        $Remaining = (Get-ChildItem $WtDir -Directory -ErrorAction SilentlyContinue).Count
+        if ($Remaining -gt 0) {
+            Write-Log "  주의: worktree 폴더 $Remaining개가 잠겨 삭제되지 않음 (실행 중인 프로세스 확인 필요)"
+        }
+    }
+
+    # 통합 후 남은 worktree-wf_* 브랜치 삭제 (병합된 커밋은 통합 브랜치에 보존됨)
+    $StaleBranches = & git -C $ProjectDir branch --format '%(refname:short)' 2>$null |
+        Where-Object { $_ -like 'worktree-wf_*' }
+    foreach ($b in $StaleBranches) { & git -C $ProjectDir branch -D $b 2>&1 | Out-Null }
+
+    Write-Log "worktree 정리 완료"
+} catch {
+    Write-Log "worktree 정리 중 경고: $($_.Exception.Message)"
 }
 
 Write-Log "=== 아침 자동화 종료 ==="

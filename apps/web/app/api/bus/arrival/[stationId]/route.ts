@@ -19,13 +19,13 @@ export async function GET(
   }
 
   try {
-    const cacheKey = `stop:info:${stationId}`
+    const cacheKey = `bus:arrival:${stationId}`
     const cachedAt = Date.now()
 
     const body = await withCache(
       redis,
       cacheKey,
-      CACHE_TTL.STOP_INFO,
+      CACHE_TTL.BUS_ARRIVAL,
       () => gyeonggiApi.getBusArrivals(stationId),
     )
 

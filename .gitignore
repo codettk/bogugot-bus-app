@@ -20,6 +20,9 @@ build/
 .cache/
 *.tsbuildinfo
 
+# Claude 워크플로우 격리 worktree (isolation: 'worktree' 자동 생성, 커밋 금지)
+.claude/worktrees/
+
 # 로그
 logs/
 *.log

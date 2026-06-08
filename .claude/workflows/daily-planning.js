@@ -97,40 +97,57 @@ log(`오늘 태스크 ${tasks.length}개 실행 시작`)
 const results = []
 for (const task of tasks) {
   log(`[#${task.issueNumber}] ${task.title} 시작...`)
-  const result = await workflow('implement-feature', { task: task.prompt })
+  const result = await workflow('implement-feature', {
+    task: task.prompt,
+    issueNumber: task.issueNumber,
+    title: task.title,
+  })
   results.push({ task, result })
 
-  // 구현 완료 후 GitHub 이슈에 결과 코멘트 + close
-  const success = result && result.summary && !result.failed?.length
-  const commentBody = success
-    ? `## ✅ 구현 완료\n\n${result.summary}\n\n**통과:** ${(result.passed || []).join(', ')}\n\n> 자동 완료 처리 by bogugot PM`
-    : `## ⚠️ 구현 부분 실패\n\n${result?.summary || '결과 없음'}\n\n**실패 항목:**\n${(result?.failed || []).map(f => `- ${f.title}: ${f.feedback}`).join('\n')}\n\n> 자동 기록 by bogugot PM`
+  // 구현 결과 판정: 실패 항목이 없고, 통합 단계에서 PR이 생성됐는지까지 본다.
+  const noFailures = result && result.summary && !result.failed?.length
+  const prUrl = result && result.integration ? result.integration.prUrl : null
+  const success = noFailures && Boolean(prUrl)
 
+  // 구현 코드는 PR로 올라가며 master에 자동 병합되지 않는다.
+  // 따라서 성공해도 이슈를 닫지 않고 PR 링크만 코멘트한다(머지는 사람이 검토 후).
+  let commentBody
+  if (success) {
+    commentBody = `## ✅ 구현 완료 — PR 생성됨 (머지 대기)\n\n${result.summary}\n\n**통과:** ${(result.passed || []).concat(result.fixedAndPassed || []).join(', ')}\n\n**PR:** ${prUrl}\n\n> 코드는 통합 브랜치 PR로 올라갔습니다. 검토 후 머지하면 이 이슈는 자동으로 닫힙니다(PR 본문 \`Closes #${task.issueNumber}\`).\n> 자동 처리 by bogugot PM`
+  } else if (noFailures) {
+    commentBody = `## ⚠️ 구현은 통과했으나 통합 실패\n\n${result.summary}\n\n통합/PR 단계에서 문제가 발생했습니다(타입 검사 실패 또는 push 실패).\n\n${result.integration ? `통합 메모: ${result.integration.notes}` : '통합 정보 없음'}\n\n> 자동 기록 by bogugot PM`
+  } else {
+    commentBody = `## ⚠️ 구현 부분 실패\n\n${result?.summary || '결과 없음'}\n\n**실패 항목:**\n${(result?.failed || []).map(f => `- ${f.title}: ${f.feedback}`).join('\n')}\n\n> 자동 기록 by bogugot PM`
+  }
+
+  // 코멘트만 남기고 이슈는 열어둔다(PR 머지 시 GitHub가 Closes 키워드로 자동 close).
   await agent(
-    `GitHub API를 사용해서 다음 작업을 순서대로 실행해줘. GITHUB_REPO와 GITHUB_TOKEN 환경변수를 읽어서 사용해.
+    `GitHub API를 사용해서 다음 작업을 실행해줘. GITHUB_REPO와 GITHUB_TOKEN 환경변수를 읽어서 사용해.
 
-1. 이슈 #${task.issueNumber}에 코멘트 추가:
+이슈 #${task.issueNumber}에 코멘트 추가:
    POST https://api.github.com/repos/<GITHUB_REPO>/issues/${task.issueNumber}/comments
    Authorization: Bearer <GITHUB_TOKEN>
    body: ${JSON.stringify(commentBody)}
 
-2. ${success ? `이슈 #${task.issueNumber} close:
-   PATCH https://api.github.com/repos/<GITHUB_REPO>/issues/${task.issueNumber}
-   body: {"state": "closed"}` : `이슈 #${task.issueNumber}에 in_progress 라벨 제거 (실패했으므로 유지)`}
-
-WebFetch로 각 API를 호출하고 결과를 확인해줘.`,
-    { agentType: 'backend-dev', label: `close-issue:${task.issueNumber}`, phase: 'Execute' }
+WebFetch로 API를 호출하고 결과를 확인해줘. (이슈 상태는 변경하지 마라 — PR 머지 시 자동으로 닫힌다.)`,
+    { agentType: 'backend-dev', label: `comment-issue:${task.issueNumber}`, phase: 'Execute' }
   )
 
-  log(`[#${task.issueNumber}] ${task.title} ${success ? '완료 (이슈 closed)' : '실패 (이슈 유지)'}`)
+  log(`[#${task.issueNumber}] ${task.title} ${success ? `완료 (PR: ${prUrl})` : '미완료 (이슈 유지)'}`)
 }
 
 // Phase 3: EOD 리포트
 phase('EOD Report')
-const passed = results.filter(r => r.result && r.result.summary && !r.result.failed?.length)
-const failed = results.filter(r => !r.result || !r.result.summary || r.result.failed?.length)
+const isSuccess = (r) =>
+  r.result &&
+  r.result.summary &&
+  !r.result.failed?.length &&
+  r.result.integration &&
+  r.result.integration.prUrl
+const passed = results.filter(isSuccess)
+const failed = results.filter((r) => !isSuccess(r))
 
-log(`오늘 결과: 성공 ${passed.length}개, 실패 ${failed.length}개`)
+log(`오늘 결과: 성공(PR 생성) ${passed.length}개, 미완료 ${failed.length}개`)
 
 // Phase 4: 다음 스프린트 계획 (planning 워크플로우)
 phase('Planning')

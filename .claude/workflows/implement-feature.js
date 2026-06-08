@@ -1,12 +1,13 @@
 export const meta = {
   name: 'implement-feature',
-  description: '기능 구현 → 코드 검사 → 재작업 오케스트레이션',
+  description: '기능 구현 → 코드 검사 → 재작업 → 통합(PR) 오케스트레이션',
   phases: [
     { title: 'Plan', detail: 'architect가 태스크를 subtask로 분해' },
-    { title: 'Build', detail: 'agentType별 병렬 구현 (worktree 격리)' },
+    { title: 'Build', detail: 'agentType별 병렬 구현 (worktree 격리 + 커밋)' },
     { title: 'Review', detail: 'reviewer가 각 구현물 병렬 검사' },
     { title: 'Fix', detail: 'fail 항목 재작업 (최대 2회)' },
-    { title: 'Report', detail: '성공/실패 요약 반환' },
+    { title: 'Integrate', detail: '통과 브랜치를 통합 브랜치로 병합 + tsc 검증 + PR 생성' },
+    { title: 'Report', detail: '성공/실패/PR 요약 반환' },
   ],
 }
 
@@ -32,6 +33,17 @@ const SUBTASKS_SCHEMA = {
   required: ['subtasks'],
 }
 
+// 빌드/수정 에이전트는 worktree 브랜치에 커밋한 뒤 브랜치명과 구현 내용을 반환한다.
+const BUILD_SCHEMA = {
+  type: 'object',
+  properties: {
+    branch: { type: 'string' },
+    committed: { type: 'boolean' },
+    implementation: { type: 'string' },
+  },
+  required: ['branch', 'committed', 'implementation'],
+}
+
 const REVIEW_SCHEMA = {
   type: 'object',
   properties: {
@@ -42,14 +54,36 @@ const REVIEW_SCHEMA = {
   required: ['pass', 'issues', 'feedback'],
 }
 
+const INTEGRATE_SCHEMA = {
+  type: 'object',
+  properties: {
+    integrationBranch: { type: 'string' },
+    mergedBranches: { type: 'array', items: { type: 'string' } },
+    tscPassed: { type: 'boolean' },
+    pushed: { type: 'boolean' },
+    prUrl: { type: 'string' },
+    notes: { type: 'string' },
+  },
+  required: ['integrationBranch', 'mergedBranches', 'tscPassed', 'pushed', 'notes'],
+}
+
+// args는 두 형태를 모두 지원한다.
+//  - 문자열: `/implement-feature "..."` 단독 실행 (태스크 설명)
+//  - 객체: daily-planning이 { task, issueNumber, title } 로 위임
+const taskPrompt = typeof args === 'string' ? args : (args && args.task) || ''
+const issueRef =
+  args && typeof args === 'object' && typeof args.issueNumber === 'number'
+    ? args.issueNumber
+    : null
+
 // ─── Phase 1: Plan ───────────────────────────────────────────────────────────
 phase('Plan')
-log(`태스크 분해 시작: ${args}`)
+log(`태스크 분해 시작: ${taskPrompt}`)
 
 const plan = await agent(
   `다음 기능 태스크를 bogugot-bus-app 모노레포 구조에 맞게 구현 가능한 subtask 단위로 분해하세요.
 
-태스크: ${args}
+태스크: ${taskPrompt}
 
 모노레포 구조:
 - apps/web/app/api/       → backend-dev (Next.js API Route, Redis 캐시, SSE)
@@ -75,27 +109,48 @@ if (!plan) {
 
 log(`subtask ${plan.subtasks.length}개로 분해 완료: ${plan.subtasks.map(s => s.title).join(', ')}`)
 
+// worktree 빌드 에이전트가 자기 브랜치에 커밋하도록 지시하는 공통 안내문
+const COMMIT_INSTRUCTIONS = `
+
+---
+[작업 환경 안내]
+너는 이 워크플로우가 만든 격리된 git worktree 안에서 동작한다. 구현을 마치면 반드시 다음을 수행해라:
+1. 변경/생성한 모든 파일을 저장한다.
+2. \`git add -A && git commit -m "feat: <간단한 제목>"\` 로 현재 worktree 브랜치에 커밋한다.
+3. \`git rev-parse --abbrev-ref HEAD\` 로 현재 브랜치명을 확인한다.
+
+반환값(JSON):
+- branch: 위에서 확인한 현재 브랜치명 (정확히 그대로)
+- committed: 커밋에 성공했으면 true
+- implementation: 리뷰어가 검토할 수 있도록, 변경한 핵심 파일들의 경로와 최종 내용을 포함한 구현 요약
+`
+
 // ─── Phase 2: Build ──────────────────────────────────────────────────────────
 phase('Build')
 
 const builds = await pipeline(
   plan.subtasks,
   (subtask) =>
-    agent(subtask.prompt, {
+    agent(subtask.prompt + COMMIT_INSTRUCTIONS, {
       agentType: subtask.agentType,
       label: `build:${subtask.title}`,
       phase: 'Build',
       isolation: 'worktree',
+      schema: BUILD_SCHEMA,
     }),
   (result, subtask) => {
     if (result === null) {
       log(`⚠️ ${subtask.title} 구현 실패 (에이전트 오류)`)
+    } else if (!result.committed) {
+      log(`⚠️ ${subtask.title} 커밋 실패 — 통합에서 제외될 수 있음`)
     }
     return { subtask, result }
   }
 )
 
-const successfulBuilds = builds.filter(Boolean).filter((b) => b.result !== null)
+const successfulBuilds = builds
+  .filter(Boolean)
+  .filter((b) => b.result !== null)
 log(`구현 완료: ${successfulBuilds.length}/${plan.subtasks.length}`)
 
 // ─── Phase 3: Review ─────────────────────────────────────────────────────────
@@ -113,7 +168,7 @@ const reviews = await parallel(
 ${b.subtask.prompt}
 
 구현 결과:
-${b.result}
+${b.result.implementation}
 
 검사 항목:
 1. TypeScript strict 타입 안전성 (any 사용 여부, 공유 타입 활용)
@@ -162,12 +217,13 @@ ${item.review.feedback}
 발견된 문제점:
 ${item.review.issues.join('\n')}
 
-위 문제점을 모두 수정하여 완전한 구현을 제공하세요.`,
+위 문제점을 모두 수정하여 완전한 구현을 제공하세요.${COMMIT_INSTRUCTIONS}`,
         {
           agentType: item.subtask.agentType,
           label: `fix:${item.subtask.title}:attempt${attempt}`,
           phase: 'Fix',
           isolation: 'worktree',
+          schema: BUILD_SCHEMA,
         }
       ).then((fixResult) => {
         if (fixResult === null) return null
@@ -178,7 +234,7 @@ ${item.review.issues.join('\n')}
 이전 피드백: ${item.review.feedback}
 
 재구현 결과:
-${fixResult}
+${fixResult.implementation}
 
 이전에 발견된 문제점들이 해결되었는지 확인하고, 새로운 문제는 없는지 검사하세요.`,
           {
@@ -200,20 +256,83 @@ ${fixResult}
   log(`Fix 시도 ${attempt} 결과: ${fixPassCount}/${validFixed.length} 통과`)
 }
 
-// ─── Phase 5: Report ─────────────────────────────────────────────────────────
-phase('Report')
+// ─── Phase 5: Integrate ──────────────────────────────────────────────────────
+// 리뷰를 통과한 worktree 브랜치들을 하나의 통합 브랜치로 병합하고, tsc로 검증한 뒤
+// 원격에 push + PR 생성. master에 직접 머지하지 않고 사람이 검토하도록 PR로 올린다.
+phase('Integrate')
 
 const initialPassed = validReviews.filter((r) => r.review && r.review.pass)
 const fixedAndPassed = fixedResults.filter((r) => r.review && r.review.pass)
-const stillFailed = toFix
+const allPassed = [...initialPassed, ...fixedAndPassed]
 
-const totalPassed = initialPassed.length + fixedAndPassed.length
+const passedBranches = allPassed
+  .map((r) => r.result && r.result.branch)
+  .filter((b) => typeof b === 'string' && b.length > 0)
+
+let integration = null
+
+if (passedBranches.length === 0) {
+  log('통합할 통과 브랜치가 없습니다. Integrate 단계를 건너뜁니다.')
+} else {
+  const integrationBranchName = issueRef
+    ? `auto/issue-${issueRef}`
+    : `auto/impl-${plan.subtasks.length}-subtasks`
+
+  log(`통합 시작: ${passedBranches.length}개 브랜치 → ${integrationBranchName}`)
+
+  integration = await agent(
+    `너는 메인 git working tree에서 동작한다(격리 worktree 아님). 아래 절차를 정확히 수행해라.
+
+목표: 리뷰를 통과한 worktree 브랜치들을 하나의 통합 브랜치로 병합하고, 타입 검사 후 PR을 생성한다.
+
+통과한 브랜치 목록:
+${passedBranches.map((b) => `- ${b}`).join('\n')}
+
+통합 브랜치명: ${integrationBranchName}
+${issueRef ? `관련 이슈 번호: #${issueRef}` : '(관련 이슈 없음 — 단독 실행)'}
+
+절차:
+1. 현재 작업트리가 깨끗한지 확인한다. 변경사항이 있으면 \`git stash -u\` 로 잠시 치워두고, 모든 작업이 끝난 뒤 \`git stash pop\` 한다.
+2. \`git checkout master\` 후, \`git checkout -B ${integrationBranchName}\` 로 통합 브랜치를 만든다(master 기준).
+3. 통과한 각 브랜치를 \`git merge --no-ff <branch> -m "merge: <branch>"\` 로 병합한다. 충돌이 나면 해당 브랜치는 건너뛰고 notes에 기록한다.
+4. \`pnpm install --frozen-lockfile=false\` 후 \`pnpm tsc\` 로 타입 검사를 실행한다. 실패하면 가능한 범위에서 수정 후 다시 검사한다.
+5. tsc가 통과하면 \`git push -u origin ${integrationBranchName}\` 로 푸시하고, \`gh pr create --base master --head ${integrationBranchName} --title "..." --body "..."\` 로 PR을 만든다.${issueRef ? ` PR 본문에 "Closes #${issueRef}" 를 포함한다.` : ''}
+6. gh가 출력한 PR URL을 prUrl로 반환한다. push/PR에 실패하면 pushed=false로 두고 notes에 원인을 적는다.
+
+환경변수 GITHUB_TOKEN / GITHUB_REPO 와 인증된 gh CLI 를 사용할 수 있다.
+
+반환값(JSON): integrationBranch, mergedBranches(실제로 병합 성공한 브랜치 배열), tscPassed, pushed, prUrl(없으면 빈 문자열), notes.`,
+    {
+      agentType: 'backend-dev',
+      label: 'integrate',
+      phase: 'Integrate',
+      schema: INTEGRATE_SCHEMA,
+    }
+  )
+
+  if (integration) {
+    log(
+      `통합 결과: ${integration.mergedBranches.length}개 병합, tsc ${integration.tscPassed ? '통과' : '실패'}, ` +
+        `${integration.pushed ? `PR: ${integration.prUrl || '(URL 없음)'}` : 'push 안 됨'}`
+    )
+  } else {
+    log('통합 에이전트 실행 실패 (null 반환).')
+  }
+}
+
+// ─── Phase 6: Report ─────────────────────────────────────────────────────────
+phase('Report')
+
+const stillFailed = toFix
+const totalPassed = allPassed.length
 const totalFailed = stillFailed.length
 
 log(`최종 결과: ${totalPassed} 통과 / ${totalFailed} 실패`)
 
 return {
-  summary: `${totalPassed} passed, ${totalFailed} failed (${plan.subtasks.length} total subtasks)`,
+  summary:
+    `${totalPassed} passed, ${totalFailed} failed (${plan.subtasks.length} total subtasks)` +
+    (integration && integration.pushed && integration.prUrl ? ` — PR: ${integration.prUrl}` : ''),
   passed: initialPassed.map((r) => r.subtask.title),
   fixedAndPassed: fixedAndPassed.map((r) => r.subtask.title),
   failed: stillFailed.map((r) => ({
@@ -221,4 +340,13 @@ return {
     issues: r.review ? r.review.issues : [],
     feedback: r.review ? r.review.feedback : '리뷰 데이터 없음',
   })),
+  integration: integration
+    ? {
+        branch: integration.integrationBranch,
+        merged: integration.mergedBranches,
+        tscPassed: integration.tscPassed,
+        prUrl: integration.pushed ? integration.prUrl || null : null,
+        notes: integration.notes,
+      }
+    : null,
 }

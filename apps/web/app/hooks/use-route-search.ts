@@ -4,10 +4,12 @@ import { useQuery } from '@tanstack/react-query'
 import type { BusRoute } from '@bogugot/types'
 
 async function fetchRouteSearch(keyword: string): Promise<BusRoute[]> {
-  const res = await fetch(`/api/routes/search?keyword=${encodeURIComponent(keyword)}`)
+  const res = await fetch(
+    `/api/bus/search?type=route&keyword=${encodeURIComponent(keyword)}`,
+  )
   if (!res.ok) throw new Error('노선 검색에 실패했습니다')
-  const data = await res.json() as { routes: BusRoute[] }
-  return data.routes
+  const data = await res.json() as { type: 'route'; results: BusRoute[]; keyword: string }
+  return data.results
 }
 
 export function useRouteSearch(keyword: string) {
