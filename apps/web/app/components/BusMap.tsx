@@ -56,7 +56,7 @@ export function BusMap({ routeId }: BusMapProps) {
   const kakaoRef = useRef<KakaoNamespace | null>(null)
   const markersRef = useRef<Map<string, KakaoMarker>>(new Map())
 
-  const buses = useBusSSE(routeId)
+  const { locations: buses } = useBusSSE(routeId)
 
   // 지도 초기화
   useEffect(() => {

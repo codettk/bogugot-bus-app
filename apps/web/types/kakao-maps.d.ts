@@ -30,6 +30,12 @@ interface KakaoMap {
   setBounds(bounds: KakaoLatLngBounds): void
   /** 지도 중심 좌표를 이동한다. */
   setCenter(latlng: KakaoLatLng): void
+  /** 현재 지도 중심 좌표를 반환한다. */
+  getCenter(): KakaoLatLng
+  /** 지도 확대 레벨을 설정한다. */
+  setLevel(level: number): void
+  /** 현재 지도 확대 레벨을 반환한다. */
+  getLevel(): number
 }
 
 /** kakao.maps.Marker 생성 옵션 */
@@ -86,6 +92,9 @@ declare namespace kakao.maps {
     constructor(container: HTMLElement, options: KakaoMapOptions)
     setBounds(bounds: KakaoLatLngBounds): void
     setCenter(latlng: KakaoLatLng): void
+    getCenter(): KakaoLatLng
+    setLevel(level: number): void
+    getLevel(): number
   }
 
   /** 마커 객체 생성자. */
@@ -103,9 +112,15 @@ declare namespace kakao.maps {
   }
 }
 
+/**
+ * kakao 전역 네임스페이스 타입 별칭.
+ * SDK 로드 후 resolve 되는 객체 타입을 import 없이 전역 참조할 수 있게 한다.
+ */
+type KakaoNamespace = typeof kakao
+
 // 파일에 import/export 가 없어 ambient(전역) 스크립트로 취급되므로,
 // 위 namespace/interface 들은 다른 파일에서 import 없이 전역 참조 가능하다.
-// Window 인터페이스도 전역 병합된다.
+// Window 인터페이스도 전역 병합된다. SDK 로드 전에는 undefined 이므로 optional.
 interface Window {
-  kakao: typeof kakao
+  kakao?: KakaoNamespace
 }
